@@ -140,7 +140,17 @@ namespace CallingConv {
     /// convention differs from the more common \c X86_64_SysV convention
     /// in a number of ways, most notably in that XMM registers used to pass
     /// arguments are shadowed by GPRs, and vice versa.
-    X86_64_Win64 = 79
+    X86_64_Win64 = 79,
+
+    /// \brief MSVC calling convention that passes vectors and vector aggregates
+    /// in SSE registers.
+    X86_VectorCall = 80,
+
+    /// AVR_INTR - Calling convention used for AVR interrupt routines.
+    AVR_INTR = 81,
+    
+    /// AVR_SIGNAL - Calling convention used for AVR signal routines.
+    AVR_SIGNAL = 82
   };
 } // End CallingConv namespace
 

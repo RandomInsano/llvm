@@ -207,6 +207,14 @@ static Value *GetLinearExpression(Value *V, APInt &Scale, APInt &Offset,
     return V;
   }
 
+  if (ConstantInt *Const = dyn_cast<ConstantInt>(V)) {
+    // if it's a constant, just convert it to an offset
+    // and remove the variable.
+    Offset += Const->getValue();
+    assert(Scale == 0 && "Constant values don't have a scale");
+    return V;
+  }
+
   if (BinaryOperator *BOp = dyn_cast<BinaryOperator>(V)) {
     if (ConstantInt *RHSC = dyn_cast<ConstantInt>(BOp->getOperand(1))) {
       switch (BOp->getOpcode()) {
@@ -606,7 +614,7 @@ BasicAliasAnalysis::pointsToConstantMemory(const Location &Loc, bool OrLocal) {
   Worklist.push_back(Loc.Ptr);
   do {
     const Value *V = GetUnderlyingObject(Worklist.pop_back_val(), DL);
-    if (!Visited.insert(V)) {
+    if (!Visited.insert(V).second) {
       Visited.clear();
       return AliasAnalysis::pointsToConstantMemory(Loc, OrLocal);
     }
@@ -907,8 +915,8 @@ BasicAliasAnalysis::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
   // derived pointer.
   if (const GEPOperator *GEP2 = dyn_cast<GEPOperator>(V2)) {
     // Do the base pointers alias?
-    AliasResult BaseAlias = aliasCheck(UnderlyingV1, UnknownSize, nullptr,
-                                       UnderlyingV2, UnknownSize, nullptr);
+    AliasResult BaseAlias = aliasCheck(UnderlyingV1, UnknownSize, AAMDNodes(),
+                                       UnderlyingV2, UnknownSize, AAMDNodes());
 
     // Check for geps of non-aliasing underlying pointers where the offsets are
     // identical.
@@ -991,7 +999,7 @@ BasicAliasAnalysis::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
     if (V1Size == UnknownSize && V2Size == UnknownSize)
       return MayAlias;
 
-    AliasResult R = aliasCheck(UnderlyingV1, UnknownSize, nullptr,
+    AliasResult R = aliasCheck(UnderlyingV1, UnknownSize, AAMDNodes(),
                                V2, V2Size, V2AAInfo);
     if (R != MustAlias)
       // If V2 may alias GEP base pointer, conservatively returns MayAlias.
@@ -1054,30 +1062,45 @@ BasicAliasAnalysis::aliasGEP(const GEPOperator *GEP1, uint64_t V1Size,
     }
   }
 
-  // Try to distinguish something like &A[i][1] against &A[42][0].
-  // Grab the least significant bit set in any of the scales.
   if (!GEP1VariableIndices.empty()) {
     uint64_t Modulo = 0;
     bool AllPositive = true;
     for (unsigned i = 0, e = GEP1VariableIndices.size(); i != e; ++i) {
-      const Value *V = GEP1VariableIndices[i].V;
-      Modulo |= (uint64_t)GEP1VariableIndices[i].Scale;
 
-      // If the variable's been zero-extended or begins with a zero then
-      //  we know it's positive. regardless of whether the value is signed
-      // or unsigned.
-      bool SignKnownZero, SignKnownOne;
-      ComputeSignBit(
-        const_cast<Value *>(V),
-        SignKnownZero, SignKnownOne,
-        DL, 0, AT, nullptr, DT);
-      bool IsZExt = GEP1VariableIndices[i].Extension == EK_ZeroExt;
-      AllPositive &= IsZExt || SignKnownZero;
+      // Try to distinguish something like &A[i][1] against &A[42][0].
+      // Grab the least significant bit set in any of the scales. We
+      // don't need std::abs here (even if the scale's negative) as we'll
+      // be ^'ing Modulo with itself later.
+      Modulo |= (uint64_t) GEP1VariableIndices[i].Scale;
 
-      // If the Value is currently positive but could change in a cycle,
-      // then we can't guarantee it'll always br positive.
-      AllPositive &= isValueEqualInPotentialCycles(V, V);
+      if (AllPositive) {
+        // If the Value could change between cycles, then any reasoning about
+        // the Value this cycle may not hold in the next cycle. We'll just
+        // give up if we can't determine conditions that hold for every cycle:
+        const Value *V = GEP1VariableIndices[i].V;
+
+        bool SignKnownZero, SignKnownOne;
+        ComputeSignBit(
+          const_cast<Value *>(V),
+          SignKnownZero, SignKnownOne,
+          DL, 0, AT, nullptr, DT);
+
+        // Zero-extension widens the variable, and so forces the sign
+        // bit to zero.
+        bool IsZExt = GEP1VariableIndices[i].Extension == EK_ZeroExt;
+        SignKnownZero |= IsZExt;
+        SignKnownOne &= !IsZExt;
+
+        // If the variable begins with a zero then we know it's
+        // positive, regardless of whether the value is signed or
+        // unsigned.
+        int64_t Scale = GEP1VariableIndices[i].Scale;
+        AllPositive =
+          (SignKnownZero && Scale >= 0) ||
+          (SignKnownOne && Scale < 0);
+      }
     }
+
     Modulo = Modulo ^ (Modulo & (Modulo - 1));
 
     // We can compute the difference between the two addresses
@@ -1212,7 +1235,7 @@ BasicAliasAnalysis::aliasPHI(const PHINode *PN, uint64_t PNSize,
       // sides are PHI nodes. In which case, this is O(m x n) time where 'm'
       // and 'n' are the number of PHI sources.
       return MayAlias;
-    if (UniqueSrc.insert(PV1))
+    if (UniqueSrc.insert(PV1).second)
       V1Srcs.push_back(PV1);
   }
 

@@ -125,6 +125,9 @@ class RAGreedy : public MachineFunctionPass,
   std::unique_ptr<Spiller> SpillerInstance;
   PQueue Queue;
   unsigned NextCascade;
+  
+  // AVR specific: have we already unallocated REG_Y after a spill was done?
+  bool IsYReserved;
 
   // Live ranges pass through a number of stages as we try to allocate them.
   // Some of the stages may also create new live ranges:
@@ -378,6 +381,7 @@ private:
                                    SmallVirtRegSet &, unsigned);
   bool tryRecoloringCandidates(PQueue &, SmallVectorImpl<unsigned> &,
                                SmallVirtRegSet &, unsigned);
+  void UndoRegYAllocation();
 };
 } // end anonymous namespace
 
@@ -403,7 +407,7 @@ FunctionPass* llvm::createGreedyRegisterAllocator() {
   return new RAGreedy();
 }
 
-RAGreedy::RAGreedy(): MachineFunctionPass(ID) {
+RAGreedy::RAGreedy(): MachineFunctionPass(ID), IsYReserved(false) {
   initializeLiveDebugVariablesPass(*PassRegistry::getPassRegistry());
   initializeSlotIndexesPass(*PassRegistry::getPassRegistry());
   initializeLiveIntervalsPass(*PassRegistry::getPassRegistry());
@@ -514,7 +518,7 @@ void RAGreedy::enqueue(PQueue &CurQueue, LiveInterval *LI) {
     // Giant live ranges fall back to the global assignment heuristic, which
     // prevents excessive spilling in pathological cases.
     bool ReverseLocal = TRI->reverseLocalAssignment();
-    bool ForceGlobal = !ReverseLocal && TRI->mayOverrideLocalAssignment() &&
+    bool ForceGlobal = !ReverseLocal &&
       (Size / SlotIndex::InstrDist) > (2 * MRI->getRegClass(Reg)->getNumRegs());
 
     if (ExtraRegInfo[Reg].Stage == RS_Assign && !ForceGlobal && !LI->empty() &&
@@ -817,7 +821,7 @@ unsigned RAGreedy::tryEvict(LiveInterval &VirtReg,
     const TargetRegisterClass *RC = MRI->getRegClass(VirtReg.reg);
     unsigned MinCost = RegClassInfo.getMinCost(RC);
     if (MinCost >= CostPerUseLimit) {
-      DEBUG(dbgs() << RC->getName() << " minimum cost = " << MinCost
+      DEBUG(dbgs() << TRI->getRegClassName(RC) << " minimum cost = " << MinCost
                    << ", no cheaper registers to be found.\n");
       return 0;
     }
@@ -1566,6 +1570,32 @@ RAGreedy::tryInstructionSplit(LiveInterval &VirtReg, AllocationOrder &Order,
   return 0;
 }
 
+// AVR specific code used to handle the reservation of REG_Y if any other
+// register has been spilled.
+// :NOTE: KEEP THIS CONSTANT UPDATED with the backend!
+//   This has to be a define because of linkage problems between libraries.
+#define REG_Y   (51U)
+bool RA_ReserveREG_Y = false;
+bool RA_InSpillerCode = false;
+
+void RAGreedy::UndoRegYAllocation() {
+  // search through all virtual registers where REG_Y has been assigned and
+  // send them back to the work list for reallocation
+  for (unsigned i = 0, e = MRI->getNumVirtRegs(); i != e; ++i) {
+    unsigned VirtReg = TargetRegisterInfo::index2VirtReg(i);
+    if (MRI->reg_nodbg_empty(VirtReg))
+      continue;
+
+    for (MCRegAliasIterator AI(REG_Y, TRI, true); AI.isValid(); ++AI)
+      if (VRM->getPhys(VirtReg) == *AI) {
+        LiveInterval &LI = LIS->getInterval(VirtReg);
+        Matrix->unassign(LI);
+        enqueue(&LI);
+      }
+  }
+}
+#undef REG_Y
+
 
 //===----------------------------------------------------------------------===//
 //                             Local Splitting
@@ -1789,9 +1819,11 @@ unsigned RAGreedy::tryLocalSplit(LiveInterval &VirtReg, AllocationOrder &Order,
         // instructions.
         //
         // Try to guess the size of the new interval.
-        const float EstWeight = normalizeSpillWeight(blockFreq * (NewGaps + 1),
-                                 Uses[SplitBefore].distance(Uses[SplitAfter]) +
-                                 (LiveBefore + LiveAfter)*SlotIndex::InstrDist);
+        const float EstWeight = normalizeSpillWeight(
+            blockFreq * (NewGaps + 1),
+            Uses[SplitBefore].distance(Uses[SplitAfter]) +
+                (LiveBefore + LiveAfter) * SlotIndex::InstrDist,
+            1);
         // Would this split be possible to allocate?
         // Never allocate all gaps, we wouldn't be making progress.
         DEBUG(dbgs() << " w=" << EstWeight);
@@ -2299,10 +2331,25 @@ unsigned RAGreedy::selectOrSplitImpl(LiveInterval &VirtReg,
     return PhysReg;
 
   // Finally spill VirtReg itself.
+  RA_InSpillerCode = true;
   NamedRegionTimer T("Spiller", TimerGroupName, TimePassesIsEnabled);
   LiveRangeEdit LRE(&VirtReg, NewVRegs, *MF, *LIS, VRM, this);
   spiller().spill(LRE);
   setStage(NewVRegs.begin(), NewVRegs.end(), RS_Done);
+  RA_InSpillerCode = false;
+  
+  // AVR specific: If we have reached this point and the backend has notified
+  // it has inserted a spill via ReserveREG_Y, then search for any allocations
+  // of REG_Y in the live intervals and undo them.
+  if (!IsYReserved && RA_ReserveREG_Y) {
+    // do all this work only once
+    IsYReserved = true;
+    // update the reserved register list
+    MRI->freezeReservedRegs(VRM->getMachineFunction());
+    RegClassInfo.runOnMachineFunction(VRM->getMachineFunction());
+    // finally perform the real work
+    UndoRegYAllocation();
+  }
 
   if (VerifyEnabled)
     MF->verify(this, "After spilling");
@@ -2317,13 +2364,13 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
                << "********** Function: " << mf.getName() << '\n');
 
   MF = &mf;
-  const TargetMachine &TM = MF->getTarget();
-  TRI = TM.getSubtargetImpl()->getRegisterInfo();
-  TII = TM.getSubtargetImpl()->getInstrInfo();
+  TRI = MF->getSubtarget().getRegisterInfo();
+  TII = MF->getSubtarget().getInstrInfo();
   RCI.runOnMachineFunction(mf);
 
   EnableLocalReassign = EnableLocalReassignment ||
-    TM.getSubtargetImpl()->enableRALocalReassignment(TM.getOptLevel());
+                        MF->getSubtarget().enableRALocalReassignment(
+                            MF->getTarget().getOptLevel());
 
   if (VerifyEnabled)
     MF->verify(this, "Before greedy register allocator");
@@ -2356,5 +2403,8 @@ bool RAGreedy::runOnMachineFunction(MachineFunction &mf) {
 
   allocatePhysRegs();
   releaseMemory();
+  
+  IsYReserved = false;
+  RA_ReserveREG_Y = false;
   return true;
 }

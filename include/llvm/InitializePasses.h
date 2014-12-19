@@ -284,6 +284,7 @@ void initializeMachineFunctionPrinterPassPass(PassRegistry&);
 void initializeStackMapLivenessPass(PassRegistry&);
 void initializeMachineCombinerPass(PassRegistry &);
 void initializeLoadCombinePass(PassRegistry&);
+void initializeRewriteSymbolsPass(PassRegistry&);
 
 // Specific to the rust-lang llvm branch:
 void initializeNullCheckEliminationPass(PassRegistry&);

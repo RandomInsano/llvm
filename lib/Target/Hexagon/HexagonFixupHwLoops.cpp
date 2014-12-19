@@ -81,8 +81,8 @@ FunctionPass *llvm::createHexagonFixupHwLoops() {
 
 /// \brief Returns true if the instruction is a hardware loop instruction.
 static bool isHardwareLoop(const MachineInstr *MI) {
-  return MI->getOpcode() == Hexagon::LOOP0_r ||
-         MI->getOpcode() == Hexagon::LOOP0_i;
+  return MI->getOpcode() == Hexagon::J2_loop0r ||
+         MI->getOpcode() == Hexagon::J2_loop0i;
 }
 
 
@@ -172,7 +172,7 @@ void HexagonFixupHwLoops::convertLoopInstr(MachineFunction &MF,
       .addReg(MII->getOperand(1).getReg());
   } else {
     // Trip count is an immediate.
-    BuildMI(*MBB, MII, DL, TII->get(Hexagon::TFRI), Scratch)
+    BuildMI(*MBB, MII, DL, TII->get(Hexagon::A2_tfrsi), Scratch)
       .addImm(MII->getOperand(1).getImm());
     BuildMI(*MBB, MII, DL, TII->get(Hexagon::TFCR), Hexagon::LC0)
       .addReg(Scratch);

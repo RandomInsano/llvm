@@ -16,7 +16,6 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetInstrInfo.h"
-#include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetRegisterInfo.h"
 #include "llvm/Target/TargetSubtargetInfo.h"
 using namespace llvm;
@@ -101,6 +100,7 @@ VirtRegAuxInfo::calculateSpillWeightAndHint(LiveInterval &li) {
   MachineLoop *loop = nullptr;
   bool isExiting = false;
   float totalWeight = 0;
+  unsigned numInstr = 0; // Number of instructions using li
   SmallPtrSet<MachineInstr*, 8> visited;
 
   // Find the best physreg hint and the best virtreg hint.
@@ -117,9 +117,10 @@ VirtRegAuxInfo::calculateSpillWeightAndHint(LiveInterval &li) {
        I = mri.reg_instr_begin(li.reg), E = mri.reg_instr_end();
        I != E; ) {
     MachineInstr *mi = &*(I++);
+    numInstr++;
     if (mi->isIdentityCopy() || mi->isImplicitDef() || mi->isDebugValue())
       continue;
-    if (!visited.insert(mi))
+    if (!visited.insert(mi).second)
       continue;
 
     float weight = 1.0f;
@@ -179,7 +180,20 @@ VirtRegAuxInfo::calculateSpillWeightAndHint(LiveInterval &li) {
 
   // Mark li as unspillable if all live ranges are tiny.
   if (li.isZeroLength(LIS.getSlotIndexes())) {
-    li.markNotSpillable();
+     // HACK HACK: This is a workaround until PR14879 gets fixed!
+     // This code allows us to compile memory intensive functions when only the Z
+     // register is available, otherwise we get the "Ran out of registers ..."
+     // assertion inside the regalloc.
+     // Here we avoid marking as not spillable live intervals that use the
+     // PTRDISPREGS class and have a size greater than 8, smaller ones
+     // get filtered out, generating better code.
+     if (strcmp(MF.getSubtarget().getRegisterInfo()->getRegClassName(mri.getRegClass(li.reg)), "PTRDISPREGS") == 0 &&
+         li.getSize() > 8) {
+             totalWeight *= 10000.0F;
+             li.weight = normalizeSpillWeight(totalWeight, li.getSize(), numInstr);
+         } else {
+             li.markNotSpillable();
+     }
     return;
   }
 
@@ -190,5 +204,5 @@ VirtRegAuxInfo::calculateSpillWeightAndHint(LiveInterval &li) {
   if (isRematerializable(li, LIS, *MF.getSubtarget().getInstrInfo()))
     totalWeight *= 0.5F;
 
-  li.weight = normalize(totalWeight, li.getSize());
+  li.weight = normalize(totalWeight, li.getSize(), numInstr);
 }

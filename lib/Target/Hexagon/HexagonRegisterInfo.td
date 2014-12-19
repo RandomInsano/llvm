@@ -13,8 +13,10 @@
 
 let Namespace = "Hexagon" in {
 
-  class HexagonReg<bits<5> num, string n> : Register<n> {
+  class HexagonReg<bits<5> num, string n, list<string> alt = [], 
+                   list<Register> alias = []> : Register<n> {
     field bits<5> Num;
+    let Aliases = alias;
     let HWEncoding{4-0} = num;
   }
 
@@ -26,7 +28,7 @@ let Namespace = "Hexagon" in {
 
   // Registers are identified with 5-bit ID numbers.
   // Ri - 32-bit integer registers.
-  class Ri<bits<5> num, string n> : HexagonReg<num, n> {
+  class Ri<bits<5> num, string n, list<string> alt = []> : HexagonReg<num, n, alt> {
     let Num = num;
   }
 
@@ -53,23 +55,18 @@ let Namespace = "Hexagon" in {
     let Num = num;
   }
 
-  // Rj - aliased integer registers
-  class Rj<string n, Ri R>: HexagonReg<R.Num, n> {
-    let Num = R.Num;
-    let Aliases = [R];
-  }
-
   def subreg_loreg  : SubRegIndex<32>;
   def subreg_hireg  : SubRegIndex<32, 32>;
+  def subreg_overflow : SubRegIndex<1, 0>;
 
   // Integer registers.
-  foreach I = 0-31 in {
-    def R#I  : Ri<I, "r"#I>,  DwarfRegNum<[I]>;
+  foreach i = 0-28 in {
+    def R#i  : Ri<i, "r"#i>,  DwarfRegNum<[i]>;
   }
 
-  def SP : Rj<"sp", R29>, DwarfRegNum<[29]>;
-  def FP : Rj<"fp", R30>, DwarfRegNum<[30]>;
-  def LR : Rj<"lr", R31>, DwarfRegNum<[31]>;
+  def R29 : Ri<29, "r29", ["sp"]>, DwarfRegNum<[29]>;
+  def R30 : Ri<30, "r30", ["fp"]>, DwarfRegNum<[30]>;
+  def R31 : Ri<31, "r31", ["lr"]>, DwarfRegNum<[31]>;
 
   // Aliases of the R* registers used to hold 64-bit int values (doubles).
   let SubRegIndices = [subreg_loreg, subreg_hireg], CoveredBySubRegs = 1 in {
@@ -97,6 +94,12 @@ let Namespace = "Hexagon" in {
   def P2 : Rp<2, "p2">, DwarfRegNum<[65]>;
   def P3 : Rp<3, "p3">, DwarfRegNum<[66]>;
 
+  // Fake register to represent USR.OVF bit. Artihmetic/saturating instruc-
+  // tions modify this bit, and multiple such instructions are allowed in the
+  // same packet. We need to ignore output dependencies on this bit, but not
+  // on the entire USR.
+  def USR_OVF : Rc<?, "usr.ovf">;
+
   // Control registers.
   def SA0 : Rc<0, "sa0">, DwarfRegNum<[67]>;
   def LC0 : Rc<1, "lc0">, DwarfRegNum<[68]>;
@@ -107,6 +110,10 @@ let Namespace = "Hexagon" in {
   def M0 : Rc<6, "m0">, DwarfRegNum<[71]>;
   def M1 : Rc<7, "m1">, DwarfRegNum<[72]>;
 
+  def USR  : Rc<8,  "usr">,   DwarfRegNum<[74]> {
+    let SubRegIndices = [subreg_overflow];
+    let SubRegs = [USR_OVF];
+  }
   def PC : Rc<9,  "pc">, DwarfRegNum<[32]>; // is the Dwarf number correct?
   def GP : Rc<11, "gp">, DwarfRegNum<[33]>; // is the Dwarf number correct?
 }
@@ -133,8 +140,21 @@ def PredRegs : RegisterClass<"Hexagon", [i1], 32, (add (sequence "P%u", 0, 3))>
 }
 
 def CRRegs : RegisterClass<"Hexagon", [i32], 32,
-                           (add (sequence "LC%u", 0, 1),
-                                (sequence "SA%u", 0, 1),
-                                (sequence "M%u", 0, 1), PC, GP)> {
+                           (add LC0, SA0, LC1, SA1,
+                                M0, M1,
+                                USR, USR_OVF, PC, GP)> {
   let Size = 32;
 }
+
+def VolatileV3 {
+  list<Register> Regs = [D0, D1, D2, D3, D4, D5, D6, D7,
+                         R28, R31,
+                         P0, P1, P2, P3,
+                         M0, M1,
+                         LC0, LC1, SA0, SA1, USR, USR_OVF];
+}
+
+def PositiveHalfWord : PatLeaf<(i32 IntRegs:$a),
+[{
+  return isPositiveHalfWord(N);
+}]>;

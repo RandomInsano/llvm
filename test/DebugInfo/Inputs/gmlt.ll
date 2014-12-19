@@ -14,7 +14,7 @@
 ;    describes those subprograms
 
 ; CHECK: DW_TAG_compile_unit
-; CHECK:   DW_AT_ranges [DW_FORM_sec_offset] (0x00000000)
+; CHECK:   DW_AT_ranges [DW_FORM_sec_offset] (0x00000000
 ; CHECK-NOT: {{DW_TAG|NULL}}
 
 ; Omitting the subprograms without inlined subroutines is not possible
@@ -43,7 +43,7 @@
 ; skeleton CU to address the relocation problem, then remove abstract
 ; definitions from -gmlt here.
 
-; CHECK: [[F3_ABS_DEF:.*]]:  DW_TAG_subprogram
+; CHECK: DW_TAG_subprogram
 ; CHECK-NEXT:     DW_AT_name {{.*}} "f3"
 
 ; FIXME: We don't really need DW_AT_inline, consumers can ignore this due to
@@ -63,7 +63,7 @@
 ; As mentioned above - replace DW_AT_abstract_origin with DW_AT_name to save
 ; space once we have support for string indexing in non-dwo sections
 
-; CHECK-NEXT:       DW_AT_abstract_origin {{.*}} {[[F3_ABS_DEF]]}
+; CHECK-NEXT:       DW_AT_abstract_origin {{.*}} "f3"
 ; CHECK-NEXT:       DW_AT_low_pc
 ; CHECK-NEXT:       DW_AT_high_pc
 ; CHECK-NEXT:       DW_AT_call_file
@@ -94,6 +94,8 @@
 
 ; CHECK: .debug_pubtypes contents:
 ; CHECK-NOT: Offset
+
+; CHECK: .apple{{.*}} contents:
 
 ; Function Attrs: nounwind uwtable
 define void @_Z2f1v() #0 {
@@ -129,23 +131,23 @@ attributes #2 = { nounwind }
 !llvm.module.flags = !{!10, !11}
 !llvm.ident = !{!12}
 
-!0 = metadata !{i32 786449, metadata !1, i32 4, metadata !"clang version 3.6.0 ", i1 false, metadata !"", i32 0, metadata !2, metadata !2, metadata !3, metadata !2, metadata !2, metadata !"", i32 2} ; [ DW_TAG_compile_unit ] [/tmp/dbginfo/gmlt.cpp] [DW_LANG_C_plus_plus]
-!1 = metadata !{metadata !"gmlt.cpp", metadata !"/tmp/dbginfo"}
-!2 = metadata !{}
-!3 = metadata !{metadata !4, metadata !7, metadata !8, metadata !9}
-!4 = metadata !{i32 786478, metadata !1, metadata !5, metadata !"f1", metadata !"f1", metadata !"", i32 1, metadata !6, i1 false, i1 true, i32 0, i32 0, null, i32 256, i1 false, void ()* @_Z2f1v, null, null, metadata !2, i32 1} ; [ DW_TAG_subprogram ] [line 1] [def] [f1]
-!5 = metadata !{i32 786473, metadata !1}          ; [ DW_TAG_file_type ] [/tmp/dbginfo/gmlt.cpp]
-!6 = metadata !{i32 786453, i32 0, null, metadata !"", i32 0, i64 0, i64 0, i64 0, i32 0, null, metadata !2, i32 0, null, null, null} ; [ DW_TAG_subroutine_type ] [line 0, size 0, align 0, offset 0] [from ]
-!7 = metadata !{i32 786478, metadata !1, metadata !5, metadata !"f2", metadata !"f2", metadata !"", i32 2, metadata !6, i1 false, i1 true, i32 0, i32 0, null, i32 256, i1 false, void ()* @_Z2f2v, null, null, metadata !2, i32 2} ; [ DW_TAG_subprogram ] [line 2] [def] [f2]
-!8 = metadata !{i32 786478, metadata !1, metadata !5, metadata !"f3", metadata !"f3", metadata !"", i32 3, metadata !6, i1 false, i1 true, i32 0, i32 0, null, i32 256, i1 false, void ()* @_Z2f3v, null, null, metadata !2, i32 3} ; [ DW_TAG_subprogram ] [line 3] [def] [f3]
-!9 = metadata !{i32 786478, metadata !1, metadata !5, metadata !"f4", metadata !"f4", metadata !"", i32 4, metadata !6, i1 false, i1 true, i32 0, i32 0, null, i32 256, i1 false, void ()* @_Z2f4v, null, null, metadata !2, i32 4} ; [ DW_TAG_subprogram ] [line 4] [def] [f4]
-!10 = metadata !{i32 2, metadata !"Dwarf Version", i32 4}
-!11 = metadata !{i32 2, metadata !"Debug Info Version", i32 1}
-!12 = metadata !{metadata !"clang version 3.6.0 "}
-!13 = metadata !{i32 1, i32 12, metadata !4, null}
-!14 = metadata !{i32 2, i32 53, metadata !7, null}
-!15 = metadata !{i32 3, i32 44, metadata !8, null}
-!16 = metadata !{i32 3, i32 50, metadata !8, null}
-!17 = metadata !{i32 3, i32 44, metadata !8, metadata !18}
-!18 = metadata !{i32 4, i32 13, metadata !9, null}
-!19 = metadata !{i32 4, i32 19, metadata !9, null}
+!0 = !{!"0x11\004\00clang version 3.6.0 \000\00\000\00\002", !1, !2, !2, !3, !2, !2} ; [ DW_TAG_compile_unit ] [/tmp/dbginfo/gmlt.cpp] [DW_LANG_C_plus_plus]
+!1 = !{!"gmlt.cpp", !"/tmp/dbginfo"}
+!2 = !{}
+!3 = !{!4, !7, !8, !9}
+!4 = !{!"0x2e\00f1\00f1\00\001\000\001\000\006\00256\000\001", !1, !5, !6, null, void ()* @_Z2f1v, null, null, !2} ; [ DW_TAG_subprogram ] [line 1] [def] [f1]
+!5 = !{!"0x29", !1}          ; [ DW_TAG_file_type ] [/tmp/dbginfo/gmlt.cpp]
+!6 = !{!"0x15\00\000\000\000\000\000\000", i32 0, null, null, !2, null, null, null} ; [ DW_TAG_subroutine_type ] [line 0, size 0, align 0, offset 0] [from ]
+!7 = !{!"0x2e\00f2\00f2\00\002\000\001\000\006\00256\000\002", !1, !5, !6, null, void ()* @_Z2f2v, null, null, !2} ; [ DW_TAG_subprogram ] [line 2] [def] [f2]
+!8 = !{!"0x2e\00f3\00f3\00\003\000\001\000\006\00256\000\003", !1, !5, !6, null, void ()* @_Z2f3v, null, null, !2} ; [ DW_TAG_subprogram ] [line 3] [def] [f3]
+!9 = !{!"0x2e\00f4\00f4\00\004\000\001\000\006\00256\000\004", !1, !5, !6, null, void ()* @_Z2f4v, null, null, !2} ; [ DW_TAG_subprogram ] [line 4] [def] [f4]
+!10 = !{i32 2, !"Dwarf Version", i32 4}
+!11 = !{i32 2, !"Debug Info Version", i32 2}
+!12 = !{!"clang version 3.6.0 "}
+!13 = !{i32 1, i32 12, !4, null}
+!14 = !{i32 2, i32 53, !7, null}
+!15 = !{i32 3, i32 44, !8, null}
+!16 = !{i32 3, i32 50, !8, null}
+!17 = !{i32 3, i32 44, !8, !18}
+!18 = !{i32 4, i32 13, !9, null}
+!19 = !{i32 4, i32 19, !9, null}

@@ -29,19 +29,40 @@ define void @test_with_lshr(i64 %i) {
 ; CHECK-LABEL: test_with_a_loop
 ; CHECK:  NoAlias: i8* %a, i8* %b
 
-define void @test_with_a_loop() {
-  %1 = tail call i8* @malloc(i64 120)
-  %a = getelementptr inbounds i8* %1, i64 8
-  %2 = getelementptr inbounds i8* %1, i64 16
+define void @test_with_a_loop(i8* %mem) {
   br label %for.loop
 
 for.loop:
-  %i = phi i32 [ 0, %0 ], [ %i.next, %for.loop ]
-  %3 = zext i32 %i to i64
-  %b = getelementptr inbounds i8* %2, i64 %3
-  %i.next = add nuw nsw i32 %i, 1
-  %4 = icmp eq i32 %i.next, 10
-  br i1 %4, label %for.loop.exit, label %for.loop
+  %i = phi i32 [ 0, %0 ], [ %i.plus1, %for.loop ]
+  %a = getelementptr inbounds i8* %mem, i64 8
+  %a.plus1 = getelementptr inbounds i8* %mem, i64 16
+  %i.64 = zext i32 %i to i64
+  %b = getelementptr inbounds i8* %a.plus1, i64 %i.64
+  %i.plus1 = add nuw nsw i32 %i, 1
+  %cmp = icmp eq i32 %i.plus1, 10
+  br i1 %cmp, label %for.loop.exit, label %for.loop
+
+for.loop.exit:
+  ret void
+}
+
+; CHECK-LABEL: test_with_varying_base_pointer_in_loop
+; CHECK:  NoAlias: i8* %a, i8* %b
+
+define void @test_with_varying_base_pointer_in_loop(i8* %mem.orig) {
+  br label %for.loop
+
+for.loop:
+  %mem = phi i8* [ %mem.orig, %0 ], [ %mem.plus1, %for.loop ]
+  %i = phi i32 [ 0, %0 ], [ %i.plus1, %for.loop ]
+  %a = getelementptr inbounds i8* %mem, i64 8
+  %a.plus1 = getelementptr inbounds i8* %mem, i64 16
+  %i.64 = zext i32 %i to i64
+  %b = getelementptr inbounds i8* %a.plus1, i64 %i.64
+  %i.plus1 = add nuw nsw i32 %i, 1
+  %mem.plus1 = getelementptr inbounds i8* %mem, i64 8
+  %cmp = icmp eq i32 %i.plus1, 10
+  br i1 %cmp, label %for.loop.exit, label %for.loop
 
 for.loop.exit:
   ret void
@@ -58,6 +79,129 @@ define void @test_sign_extension(i32 %p) {
   %p.minus1.64 = zext i32 %p.minus1 to i64
   %b.i8 = getelementptr inbounds i8* %1, i64 %p.minus1.64
   %b.i64 = bitcast i8* %b.i8 to i64*
+  ret void
+}
+
+; CHECK-LABEL: test_fe_tools
+; CHECK:  PartialAlias: i32* %a, i32* %b
+
+define void @test_fe_tools([8 x i32]* %values) {
+  br label %reorder
+
+for.loop:
+  %i = phi i32 [ 0, %reorder ], [ %i.next, %for.loop ]
+  %idxprom = zext i32 %i to i64
+  %b = getelementptr inbounds [8 x i32]* %values, i64 0, i64 %idxprom
+  %i.next = add nuw nsw i32 %i, 1
+  %1 = icmp eq i32 %i.next, 10
+  br i1 %1, label %for.loop.exit, label %for.loop
+
+reorder:
+  %a = getelementptr inbounds [8 x i32]* %values, i64 0, i64 1
+  br label %for.loop
+
+for.loop.exit:
+  ret void
+}
+
+@b = global i32 0, align 4
+@d = global i32 0, align 4
+
+; CHECK-LABEL: test_spec2006
+; CHECK:  PartialAlias: i32** %x, i32** %y
+
+define void @test_spec2006() {
+  %h = alloca [1 x [2 x i32*]], align 16
+  %d.val = load i32* @d, align 4
+  %d.promoted = sext i32 %d.val to i64
+  %1 = icmp slt i32 %d.val, 2
+  br i1 %1, label %.lr.ph, label %3
+
+.lr.ph:                                           ; preds = %0
+  br label %2
+
+; <label>:2                                       ; preds = %.lr.ph, %2
+  %i = phi i32 [ %d.val, %.lr.ph ], [ %i.plus1, %2 ]
+  %i.promoted = sext i32 %i to i64
+  %x = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 %d.promoted, i64 %i.promoted
+  %i.plus1 = add nsw i32 %i, 1
+  %cmp = icmp slt i32 %i.plus1, 2
+  br i1 %cmp, label %2, label %3
+
+; <label>:3                                      ; preds = %._crit_edge, %0
+  %y = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 0, i64 1
+  ret void
+}
+
+; CHECK-LABEL: test_modulo_analysis_easy_case
+; CHECK:  NoAlias: i32** %x, i32** %y
+
+define void @test_modulo_analysis_easy_case(i64 %i) {
+  %h = alloca [1 x [2 x i32*]], align 16
+  %x = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 %i, i64 0
+  %y = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 0, i64 1
+  ret void
+}
+
+; CHECK-LABEL: test_modulo_analysis_in_loop
+; CHECK:  NoAlias: i32** %x, i32** %y
+
+define void @test_modulo_analysis_in_loop() {
+  %h = alloca [1 x [2 x i32*]], align 16
+  br label %for.loop
+
+for.loop:
+  %i = phi i32 [ 0, %0 ], [ %i.plus1, %for.loop ]
+  %i.promoted = sext i32 %i to i64
+  %x = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 %i.promoted, i64 0
+  %y = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 0, i64 1
+  %i.plus1 = add nsw i32 %i, 1
+  %cmp = icmp slt i32 %i.plus1, 2
+  br i1 %cmp, label %for.loop, label %for.loop.exit
+
+for.loop.exit:
+  ret void
+}
+
+; CHECK-LABEL: test_modulo_analysis_with_global
+; CHECK:  PartialAlias: i32** %x, i32** %y
+
+define void @test_modulo_analysis_with_global() {
+  %h = alloca [1 x [2 x i32*]], align 16
+  %b = load i32* @b, align 4
+  %b.promoted = sext i32 %b to i64
+  br label %for.loop
+
+for.loop:
+  %i = phi i32 [ 0, %0 ], [ %i.plus1, %for.loop ]
+  %i.promoted = sext i32 %i to i64
+  %x = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 %i.promoted, i64 %b.promoted
+  %y = getelementptr inbounds [1 x [2 x i32*]]* %h, i64 0, i64 0, i64 1
+  %i.plus1 = add nsw i32 %i, 1
+  %cmp = icmp slt i32 %i.plus1, 2
+  br i1 %cmp, label %for.loop, label %for.loop.exit
+
+for.loop.exit:
+  ret void
+}
+
+; CHECK-LABEL: test_const_eval
+; CHECK: NoAlias: i8* %a, i8* %b
+define void @test_const_eval(i8* %ptr, i64 %offset) {
+  %a = getelementptr inbounds i8* %ptr, i64 %offset
+  %a.dup = getelementptr inbounds i8* %ptr, i64 %offset
+  %three = zext i32 3 to i64
+  %b = getelementptr inbounds i8* %a.dup, i64 %three
+  ret void
+}
+
+; CHECK-LABEL: test_const_eval_scaled
+; CHECK: MustAlias: i8* %a, i8* %b
+define void @test_const_eval_scaled(i8* %ptr) {
+  %three = zext i32 3 to i64
+  %six = mul i64 %three, 2
+  %a = getelementptr inbounds i8* %ptr, i64 %six
+  %b = getelementptr inbounds i8* %ptr, i64 6
   ret void
 }
 
